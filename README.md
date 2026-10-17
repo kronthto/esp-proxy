@@ -137,3 +137,6 @@ The response is JSON containing the subnet, alive IPv4 addresses, and number of 
 - **HTTPS fails:** Configure an ordinary HTTP proxy, not an HTTPS proxy. The client uses HTTP `CONNECT` to establish a raw tunnel for TLS.
 
 The sketch handles up to four proxy clients concurrently, closes ordinary HTTP requests after each response, limits headers to 2048 bytes and request bodies to 2 MiB, and closes idle CONNECT tunnels after five minutes. The separate scan service runs concurrently with proxy handling. Chunked request bodies and `Expect: 100-continue` are not supported.
+
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
