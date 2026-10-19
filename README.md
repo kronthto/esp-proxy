@@ -3,11 +3,11 @@
 This is a vibecoded tool to place in a NAT-ted network and access devices in that from outside using your VPS.
 Miniz is required along with the code here.
 
-Use 16MB Flash Size, OPI PSRAM
+Use 16MB Flash Size, OPI PSRAM, Minimal spiffs
 
 This Arduino IDE sketch connects an ESP32 to Wi-Fi, starts an outbound WireGuard peer to your VPS, and serves a plaintext HTTP proxy on both the Wi-Fi and WireGuard interfaces. It supports ordinary HTTP requests, plain WebSocket upgrades (a relict before CONNECT), and `CONNECT`. `CONNECT` opens an opaque TCP tunnel: the proxy does not terminate or inspect TLS, though TLS may pass through end-to-end.
 
-The proxy and scan endpoint have no authentication. The proxy permits TCP connections to any port on the ESP32's directly connected Wi-Fi subnet, and the scan endpoint can ping hosts on that subnet. Anyone who can reach these services on either interface can use them. Do not expose them to untrusted clients.
+The proxy and scan endpoints have no authentication. The proxy permits TCP connections to any port on the ESP32's directly connected Wi-Fi subnet, and the scan endpoint can ping hosts on that subnet. The firmware upload endpoint requires the configured OTA password, but HTTP is plaintext. Anyone who can reach these services on either interface can use them; do not expose them to untrusted clients or use the upload endpoint over an untrusted network.
 
 ## What you need
 
@@ -54,6 +54,7 @@ Keep the VPS WireGuard UDP port reachable through its firewall. The ESP32 initia
 
 1. In Arduino IDE, open `arduino_wg_http_proxy/arduino_wg_http_proxy.ino`.
 2. Copy `arduino_wg_http_proxy/config.example.h` to `arduino_wg_http_proxy/config.h` if `config.h` is not present. Edit `config.h` with your Wi-Fi credentials, ESP32 private key, VPS public key, endpoint, and tunnel address. Never share the private key or Wi-Fi password.
+   Set `OTA_UPDATE_PASSWORD` in `config.h` to a long, unique password before using firmware uploads. The upload endpoint remains disabled if this setting is missing.
 3. Make sure the ESP32 tunnel address matches the VPS peer `AllowedIPs` entry. This library's installed `begin()` API takes the tunnel IP, private key, endpoint, VPS public key, and port; it does not take a tunnel mask or gateway.
 4. Choose **Sketch > Verify/Compile**, then **Sketch > Upload**.
 5. Open **Tools > Serial Monitor**, set **115200 baud**, and watch for the Wi-Fi address and proxy-start message.
@@ -71,6 +72,12 @@ Configure a client with an ordinary HTTP proxy at the ESP32 tunnel address and p
 For a client on the ESP32's Wi-Fi, use the Wi-Fi address printed in Serial Monitor instead. Both interfaces are accepted.
 
 HTTP and `CONNECT` destinations must resolve to an IPv4 address on the ESP32's directly connected Wi-Fi subnet. For example, `CONNECT 192.168.1.50:443` can tunnel to a local HTTPS service if the ESP32 is on `192.168.1.0/24`. The proxy connection itself is plaintext HTTP; TLS inside the tunnel is opaque to the ESP32. Public addresses, other subnets, and IPv6 are rejected.
+
+## Why an application proxy instead of routes and masquerading?
+
+The ESP32 exposes one tunnel address and proxies application TCP traffic to its local Wi-Fi subnet; it does not advertise or route the whole LAN through WireGuard. This avoids subnet-route collisions when the VPS, remote client, or another network uses an overlapping private IP range. The Python VPS process can run as an ordinary user, and clients only need to configure an HTTP proxy to forward application traffic through the ESP32.
+
+Dynamic ESP-side port forwards are possible too: a separate HTTP control endpoint could add and remove forwarding rules on request. That adds an API for managing network state, including its lifetime and access control, and is a deeper configuration surface than this deliberately narrow application-level forwarder. The proxy handles application TCP traffic without requiring LAN routes or masquerade/NAT rules. As a bonus, `python_vps.py` can compress the VPS-to-ESP32 tunnel bytes; a routed/NAT path would not provide that application-level compression.
 
 Plain `ws://` requests can use an HTTP/1.1 WebSocket upgrade, which the ESP32 forwards and relays in the same per-client task. `wss://` remains supported through `CONNECT`. Idle WebSocket connections close after one hour. Tinyproxy's `ReversePath` handling strips WebSocket upgrade headers, so it cannot be used as the WebSocket-facing reverse proxy for this route. A WebSocket-aware reverse proxy such as Nginx can forward to the ESP's WireGuard address (not my usecase though, see the Python script):
 
@@ -98,14 +105,16 @@ server {
 
 Replace the example WireGuard and LAN addresses with yours. Nginx must be able to route to the ESP's WireGuard IP, and its listener must be restricted to trusted clients because the ESP proxy has no authentication.
 
-For the VPS-to-ESP leg, `arduino_wg_http_proxy/python_vps.py` can compress the bytes inside its CONNECT tunnel. Keep `ENABLE_COMPRESSION = True` (the default) and run that script on the VPS; the ESP must be running this sketch version. The sketch uses the bundled miniz 2.2.0 software codec, not the ESP ROM codec; keep the `miniz*` source and header files beside the sketch. The script negotiates `zlib-block-v1` in CONNECT headers, then sends independent frames containing a signature, version, type, encoded length, decoded length, and at most 1024 decoded bytes. Each block uses zlib only when it becomes smaller; otherwise it is sent raw. The framing is between the Python process and ESP only: Nginx/WebSocket clients and the LAN service still exchange the original byte stream. Set `ENABLE_COMPRESSION = False` to use ordinary raw CONNECT instead.
+For the VPS-to-ESP leg, `python_vps.py` can compress the bytes inside its CONNECT tunnel. Keep `ENABLE_COMPRESSION = True` (the default) and run that script on the VPS; the ESP must be running this sketch version. The sketch uses the bundled miniz 2.2.0 software codec, not the ESP ROM codec; keep the `miniz*` source and header files beside the sketch. The script negotiates `zlib-block-v1` in CONNECT headers, then sends independent frames containing a signature, version, type, encoded length, decoded length, and at most 1024 decoded bytes. Each block uses zlib only when it becomes smaller; otherwise it is sent raw. The framing is between the Python process and ESP only: Nginx/WebSocket clients and the LAN service still exchange the original byte stream. Set `ENABLE_COMPRESSION = False` to use ordinary raw CONNECT instead.
 
 This is transport compression, not WebSocket per-message compression, and it does not add encryption; WireGuard still protects the VPS-to-ESP hop. It can reduce traffic for plaintext `ws://` content, but `wss://` or other TLS-encrypted payloads are effectively incompressible and usually gain no savings. Compare transferred bytes and latency with representative traffic before relying on it.
+
+The VPS uses zlib level 6, and the ESP uses miniz's default 128 search probes. These settings spend more CPU on compression than the fastest settings; check ESP latency under representative traffic.
 
 Run the framing tests from the project root with:
 
 ```sh
-python3 -m unittest discover -s arduino_wg_http_proxy -p 'test_*.py'
+python3 -m unittest discover -s . -p 'test_*.py'
 ```
 
 ## Discover LAN devices
@@ -125,6 +134,18 @@ curl http://10.77.0.2:8081/scan
 ```
 
 The response is JSON containing the subnet, alive IPv4 addresses, and number of hosts scanned. The scan probes up to 16 hosts concurrently and supports subnets up to `/23`. It uses ICMP echo, so devices or firewalls that block ping will not appear even if their services are reachable. Port `8081` is unauthenticated, like the proxy.
+
+## Update firmware over HTTP
+
+Compile the sketch and upload its `.bin` firmware image to `/update` as a raw request body. The selected partition scheme must provide OTA app slots; `Update.begin()` will reject images when no suitable slot is available. For example, from a trusted machine on the Wi-Fi or WireGuard network:
+
+```sh
+curl --fail --data-binary @firmware.bin \
+   -H 'X-OTA-Password: YOUR_OTA_UPDATE_PASSWORD' \
+   http://10.77.0.2:8081/update
+```
+
+Replace `firmware.bin` with the compiled application image and use the ESP32's Wi-Fi address instead when uploading from that LAN. The board restarts after a successful update. The password is sent over plaintext HTTP, so use this only on a trusted network; WireGuard protects the VPS-to-ESP32 route when uploading through the tunnel.
 
 ## Troubleshooting
 
