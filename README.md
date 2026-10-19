@@ -79,7 +79,7 @@ The ESP32 exposes one tunnel address and proxies application TCP traffic to its 
 
 Dynamic ESP-side port forwards are possible too: a separate HTTP control endpoint could add and remove forwarding rules on request. That adds an API for managing network state, including its lifetime and access control, and is a deeper configuration surface than this deliberately narrow application-level forwarder. The proxy handles application TCP traffic without requiring LAN routes or masquerade/NAT rules. As a bonus, `python_vps.py` can compress the VPS-to-ESP32 tunnel bytes; a routed/NAT path would not provide that application-level compression.
 
-Plain `ws://` requests can use an HTTP/1.1 WebSocket upgrade, which the ESP32 forwards and relays in the same per-client task. `wss://` remains supported through `CONNECT`. Idle WebSocket connections close after one hour. Tinyproxy's `ReversePath` handling strips WebSocket upgrade headers, so it cannot be used as the WebSocket-facing reverse proxy for this route. A WebSocket-aware reverse proxy such as Nginx can forward to the ESP's WireGuard address (not my usecase though, see the Python script):
+Plain `ws://` requests can use an HTTP/1.1 WebSocket upgrade, which the ESP32 forwards and relays in the same per-client task. `wss://` remains supported through `CONNECT` (though the Python forwarder just uses CONNECT for everything). Idle WebSocket connections close after one hour. Tinyproxy's `ReversePath` handling strips WebSocket upgrade headers, so it cannot be used as the WebSocket-facing reverse proxy for this route. A WebSocket-aware reverse proxy such as Nginx can forward to the ESP's WireGuard address (not my usecase though, see the Python script):
 
 ```nginx
 # Put the map directive inside nginx's http context.
